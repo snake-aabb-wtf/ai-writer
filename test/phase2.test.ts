@@ -39,6 +39,7 @@ describe("Phase 2", () => {
   it("失败任务会按最大尝试次数重新排队并最终成功", async () => {
     const { store, project } = fixture();
     const task = makeTask(project.id, "review", { purpose: "retry" });
+    assert.equal(task.timeoutMs, 300_000);
     task.maxAttempts = 2;
     store.createTask(task);
     let calls = 0;

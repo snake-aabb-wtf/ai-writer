@@ -61,7 +61,7 @@ curl -X POST http://localhost:4317/api/projects/<project-id>/generate
 curl http://localhost:4317/api/projects/<project-id>/chapters
 ```
 
-Phase 1 会依次执行三个任务：`bootstrap`、`plan-stage`、`produce-chapter`。模型未配置时使用确定性的降级内容，便于本地验收；配置 `.env` 后则三步都调用同一个 OpenAI Chat Completions 兼容模型。
+Phase 1 会依次执行设定初始化、阶段规划、复杂度评估、章节生成和复核任务。章节生成使用更大的独立输出预算，并要求正文不超过 3500 个字符；模型返回 `finish_reason=length` 时会被识别为截断错误并交给队列重试。模型未配置时使用确定性的降级内容，便于本地验收；配置 `.env` 后则所有步骤都调用同一个 OpenAI Chat Completions 兼容模型。
 
 项目生命周期：工作台的“项目菜单”支持归档与恢复；归档只隐藏项目，不删除正文或故事状态。永久删除需要输入完整项目名称确认，并会级联删除该项目的正文、状态、任务、动态 Agent 和事件日志。
 

@@ -20,6 +20,11 @@ import { inspectGeneratedChapter, isStageComplete, retrieveStoryFacts, reviewFor
 
 type ChatModel = Pick<OpenAICompatibleClient, "configured" | "chat">;
 
+const DEFAULT_TASK_TIMEOUT_MS = 300_000;
+const STRUCTURED_OUTPUT_MAX_TOKENS = 12_000;
+const CHAPTER_OUTPUT_MAX_TOKENS = 24_000;
+export const MAX_CHAPTER_BODY_CHARACTERS = 3_500;
+
 type BootstrapOutput = {
   theme: string;
   endingDirection: string;
@@ -81,7 +86,11 @@ function parseChapter(raw: string): GeneratedChapter {
     const status = clue.status;
     return { summary: text(clue.summary, "一个尚未解释的线索"), importance: importance === "high" || importance === "medium" || importance === "low" ? importance : "medium", status: status === "advanced" || status === "resolved" || status === "open" ? status : "open" };
   }) : [];
-  return { title: text(value.title, "第一章"), summary: text(value.summary, "故事从这里开始"), body: text(value.body, "故事从一个异常的瞬间开始。"), characterUpdates, timelineEvents, foreshadowing, stageComplete: value.stageComplete === true };
+  const body = text(value.body, "故事从一个异常的瞬间开始。场景在此处收束。");
+  if (body.length > MAX_CHAPTER_BODY_CHARACTERS) {
+    throw new Error(`模型章节正文超过 ${MAX_CHAPTER_BODY_CHARACTERS} 个字符限制（实际 ${body.length}）`);
+  }
+  return { title: text(value.title, "第一章"), summary: text(value.summary, "故事从这里开始"), body, characterUpdates, timelineEvents, foreshadowing, stageComplete: value.stageComplete === true };
 }
 
 function fallbackBootstrap(project: Project): BootstrapOutput {
@@ -96,13 +105,13 @@ function fallbackChapter(project: Project, stage: StoryStage): GeneratedChapter 
   return { title: "异常的开始", summary: `主角第一次正面接触“${project.premise}”所描述的异常，并决定继续追查。`, body: `那天，${project.premise}。主角原本以为这只是一个无法解释的小意外，直到异常再次出现，并留下了一条不能忽视的线索。\n\n主角没有立刻得到答案，却意识到自己已经被卷入其中。为了查清真相，主角做出了第一个行动决定。\n\n故事的第一道门打开了：${stage.chapterGoal}`, characterUpdates: [{ name: "主角", status: "active", note: "决定追查异常，开始进入主线。" }], timelineEvents: [{ occurredAt: "第一章", summary: "主角发现异常并决定追查。" }], foreshadowing: [{ summary: "异常背后的真正原因尚未揭开。", importance: "high", status: "open" }] };
 }
 
-async function ask(model: ChatModel, messages: ChatMessage[], fallback: string): Promise<string> {
-  return model.configured ? model.chat(messages, { temperature: 0.7, maxTokens: 8000 }) : fallback;
+async function ask(model: ChatModel, messages: ChatMessage[], fallback: string, maxTokens = STRUCTURED_OUTPUT_MAX_TOKENS): Promise<string> {
+  return model.configured ? model.chat(messages, { temperature: 0.7, maxTokens }) : fallback;
 }
 
 export function makeTask(projectId: string, kind: Task["kind"], input: unknown = {}): Task {
   const createdAt = now();
-  return { id: randomUUID(), projectId, kind, status: "queued", input, attempts: 0, maxAttempts: 3, timeoutMs: 120_000, availableAt: createdAt, agentRole: roleForTask(kind), createdAt, updatedAt: createdAt };
+  return { id: randomUUID(), projectId, kind, status: "queued", input, attempts: 0, maxAttempts: 3, timeoutMs: DEFAULT_TASK_TIMEOUT_MS, availableAt: createdAt, agentRole: roleForTask(kind), createdAt, updatedAt: createdAt };
 }
 
 async function generateBootstrap(store: Store, model: ChatModel, project: Project, task: Task): Promise<StoryState> {
@@ -165,7 +174,7 @@ async function generateChapter(store: Store, model: ChatModel, project: Project,
   const number = store.getNextChapterNumber(project.id);
   if (number !== 1) throw new Error("Phase 1 只允许生成第一章，后续章节将在队列阶段实现");
   const fallback = fallbackChapter(project, state.currentStagePlan);
-  const raw = await ask(model, [{ role: "system", content: "你是小说写作 Agent。只输出 JSON，不要 Markdown。字段必须是 title、summary、body、characterUpdates、timelineEvents、foreshadowing。body 必须是完整的中文章节正文；characterUpdates 记录本章后人物状态；timelineEvents 记录本章事件；foreshadowing 记录新增、推进或回收的伏笔。" }, { role: "user", content: JSON.stringify({ project, storyState: state, chapterNumber: number }) }], JSON.stringify(fallback));
+  const raw = await ask(model, [{ role: "system", content: `你是小说写作 Agent。只输出 JSON，不要 Markdown。字段必须是 title、summary、body、characterUpdates、timelineEvents、foreshadowing。body 必须是完整的中文章节正文，控制在 1800～3000 个汉字，绝对不能超过 ${MAX_CHAPTER_BODY_CHARACTERS} 个字符；不要为了凑长度重复内容。characterUpdates 记录本章后人物状态；timelineEvents 记录本章事件；foreshadowing 记录新增、推进或回收的伏笔。` }, { role: "user", content: JSON.stringify({ project, storyState: state, chapterNumber: number }) }], JSON.stringify(fallback), CHAPTER_OUTPUT_MAX_TOKENS);
   const generated = parseChapter(raw);
   const chapterId = randomUUID();
   const consistencyReport = inspectGeneratedChapter(state, generated);

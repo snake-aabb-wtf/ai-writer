@@ -47,6 +47,7 @@ describe("Phase 1", () => {
     assert.equal(savedState?.currentStagePlan?.title, "月背的回声");
     assert.equal(savedState?.timeline[0]?.sourceChapterId, chapter.id);
     assert.equal(savedState?.foreshadowing[0]?.firstChapterId, chapter.id);
+    assert.equal(tasks.every((task) => task.timeoutMs === 300_000), true);
     assert.deepEqual(tasks.map((task) => [task.kind, task.status]), [["review", "succeeded"], ["produce-chapter", "succeeded"], ["assess-complexity", "succeeded"], ["plan-stage", "succeeded"], ["bootstrap", "succeeded"]]);
     assert.deepEqual((tasks.find((task) => task.kind === "assess-complexity")?.output as { mode?: string } | undefined)?.mode, "chapter");
     assert.equal(chapter.consistencyReport?.ok, true);

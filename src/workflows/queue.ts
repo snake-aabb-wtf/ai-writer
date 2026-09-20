@@ -36,7 +36,7 @@ function now(): string { return new Date().toISOString(); }
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function withTimeout<T>(promise: Promise<T>, task: Task): Promise<T> {
-  const timeoutMs = task.timeoutMs ?? 120_000;
+  const timeoutMs = task.timeoutMs ?? 300_000;
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new TaskTimeoutError(task.id, timeoutMs)), timeoutMs);
     promise.then((value) => { clearTimeout(timer); resolve(value); }, (error: unknown) => { clearTimeout(timer); reject(error); });

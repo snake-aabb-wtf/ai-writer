@@ -2,6 +2,13 @@ import type { Config } from "../config.js";
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
+export class ModelResponseTruncatedError extends Error {
+  constructor(readonly finishReason: string, readonly partialContent?: string) {
+    super(`模型响应被截断（finish_reason=${finishReason}）；请重试或减少本次生成内容`);
+    this.name = "ModelResponseTruncatedError";
+  }
+}
+
 export class OpenAICompatibleClient {
   constructor(private readonly config: Config) {}
 
@@ -22,8 +29,14 @@ export class OpenAICompatibleClient {
       }),
     });
     if (!response.ok) throw new Error(`模型请求失败（${response.status}）：${await response.text()}`);
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = payload.choices?.[0]?.message?.content;
+    const payload = await response.json() as {
+      choices?: Array<{ finish_reason?: string; message?: { content?: string } }>;
+    };
+    const choice = payload.choices?.[0];
+    if (choice?.finish_reason === "length" || choice?.finish_reason === "max_tokens") {
+      throw new ModelResponseTruncatedError(choice.finish_reason, choice.message?.content);
+    }
+    const content = choice?.message?.content;
     if (!content) throw new Error("模型响应缺少 choices[0].message.content");
     return content;
   }

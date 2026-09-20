@@ -84,9 +84,9 @@ export class Store {
     stateTx.run(state.projectId, JSON.stringify(state), state.revision, state.updatedAt);
   }
 
-  listProjects(): Project[] {
+  listProjects(includeArchived = false): Project[] {
     const rows = this.db.prepare("SELECT payload FROM projects ORDER BY updated_at DESC").all() as Array<{ payload: string }>;
-    return rows.map((row) => JSON.parse(row.payload) as Project);
+    return rows.map((row) => JSON.parse(row.payload) as Project).filter((project) => includeArchived || project.status !== "archived");
   }
 
   getProject(id: string): Project | undefined {
@@ -96,6 +96,40 @@ export class Store {
 
   updateProject(project: Project): void {
     this.db.prepare("UPDATE projects SET payload = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(project), project.updatedAt, project.id);
+  }
+
+  archiveProject(project: Project, at = new Date().toISOString()): Project {
+    if (project.status === "archived") return project;
+    const archived: Project = { ...project, status: "archived", archivedAt: at, archivedFromStatus: project.status, updatedAt: at };
+    this.updateProject(archived);
+    this.appendEvent({ id: randomUUID(), projectId: project.id, type: "project.archived", payload: { fromStatus: project.status }, createdAt: at });
+    return archived;
+  }
+
+  restoreProject(project: Project, at = new Date().toISOString()): Project {
+    if (project.status !== "archived") return project;
+    const restored: Project = { ...project, status: project.archivedFromStatus ?? "draft", updatedAt: at };
+    delete restored.archivedAt;
+    delete restored.archivedFromStatus;
+    this.updateProject(restored);
+    this.appendEvent({ id: randomUUID(), projectId: project.id, type: "project.restored", payload: { toStatus: restored.status }, createdAt: at });
+    return restored;
+  }
+
+  purgeProject(projectId: string): void {
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare("DELETE FROM workflow_events WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM dynamic_agents WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM tasks WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM chapters WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM story_states WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getStoryState(projectId: string): StoryState | undefined {

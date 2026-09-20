@@ -59,6 +59,7 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 主要项目接口还包括：
 
 - `GET /api/projects`
+- `GET /api/projects?includeArchived=true`
 - `GET /api/projects/:id`
 - `GET /api/projects/:id/state`
 - `GET /api/projects/:id/tasks`
@@ -67,10 +68,14 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 - `GET /api/projects/:id/chapters`
 - `POST /api/projects/:id/pause`
 - `POST /api/projects/:id/resume`
+- `POST /api/projects/:id/archive`：可恢复归档；运行中的项目必须先暂停。
+- `POST /api/projects/:id/restore`：恢复归档项目。
+- `POST /api/projects/:id/purge`：永久删除；请求体必须包含与项目名称完全一致的 `confirmName`。
 
 ## 故事数据规则
 
 - 已生成的章节正文只能追加，不能覆盖或删除。
+- 项目归档不会删除任何故事数据；永久删除必须经过 API 的项目名称确认，并由存储层事务级联清理该项目所有关联数据。
 - 过去章节不能被自动修订；未来剧情通过新章节自洽。
 - 人物状态、伏笔和时间线的更正采用追加事件，保留历史可追溯性。
 - 新增持久化行为必须补充规范测试。

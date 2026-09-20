@@ -68,7 +68,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (await serveStatic(new URL(req.url ?? "/", "http://localhost").pathname, res)) return;
   }
   if (method === "GET" && parts[0] === "health") { send(res, 200, { ok: true, modelConfigured: model.configured }); return; }
-  if (method === "GET" && parts[0] === "api" && parts[1] === "projects" && parts.length === 2) { send(res, 200, { projects: store.listProjects() }); return; }
+  if (method === "GET" && parts[0] === "api" && parts[1] === "projects" && parts.length === 2) {
+    const includeArchived = new URL(req.url ?? "/", "http://localhost").searchParams.get("includeArchived") === "true";
+    send(res, 200, { projects: store.listProjects(includeArchived) }); return;
+  }
   if (method === "POST" && parts[0] === "api" && parts[1] === "projects" && parts.length === 2) {
     const input = await readJson(req) as Partial<CreateProjectInput>;
     if (!input.name || !input.genre || !input.style || !input.premise) { send(res, 400, { error: "name、genre、style、premise 均为必填项" }); return; }
@@ -92,6 +95,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (store.listChapters(project.id).length > 0) { send(res, 409, { error: "项目已经生成过第一章，Phase 2 才会支持继续生成" }); return; }
       startPhaseOne(project);
       send(res, 202, { project: store.getProject(project.id), message: "Phase 1 已开始执行" }); return;
+    }
+    if (method === "POST" && parts[3] === "archive") {
+      if (project.status === "running") { send(res, 409, { error: "项目正在生成中，请先暂停后再归档" }); return; }
+      const archived = store.archiveProject(project);
+      send(res, 200, { project: archived, message: "项目已归档，可随时恢复" }); return;
+    }
+    if (method === "POST" && parts[3] === "restore") {
+      const restored = store.restoreProject(project);
+      send(res, 200, { project: restored, message: "项目已恢复" }); return;
+    }
+    if (method === "POST" && parts[3] === "purge") {
+      if (project.status === "running") { send(res, 409, { error: "项目正在生成中，请先暂停后再永久删除" }); return; }
+      const input = await readJson(req) as { confirmName?: string };
+      if (input.confirmName !== project.name) { send(res, 400, { error: "请输入完整项目名称以确认永久删除" }); return; }
+      store.purgeProject(project.id);
+      send(res, 200, { projectId: project.id, message: "项目及其全部故事数据已永久删除" }); return;
     }
     if (method === "POST" && parts[3] === "pause") { const next = { ...project, status: "paused" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); store.pauseQueuedTasks(project.id, next.updatedAt); send(res, 200, { project: next, tasks: store.listTasks(project.id) }); return; }
     if (method === "POST" && parts[3] === "resume") { const next = { ...project, status: "running" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); store.resumePausedTasks(project.id, next.updatedAt); send(res, 200, { project: next, tasks: store.listTasks(project.id) }); return; }

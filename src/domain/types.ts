@@ -1,4 +1,4 @@
-export type ProjectStatus = "draft" | "running" | "paused" | "completed" | "error";
+export type ProjectStatus = "draft" | "running" | "paused" | "completed" | "error" | "archived";
 
 export type Project = {
   id: string;
@@ -11,6 +11,8 @@ export type Project = {
   currentStage: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
+  archivedFromStatus?: Exclude<ProjectStatus, "archived">;
 };
 
 export type StoryState = {
@@ -132,7 +134,7 @@ export type AgentAuthorization = {
   expiresAt: string;
 };
 
-export type WorkflowEventType = "agent.created" | "agent.authorized" | "agent.revoked" | "task.created" | "task.claimed" | "task.retry" | "task.succeeded" | "task.failed" | "task.paused" | "task.recovered" | "state.correction";
+export type WorkflowEventType = "agent.created" | "agent.authorized" | "agent.revoked" | "task.created" | "task.claimed" | "task.retry" | "task.succeeded" | "task.failed" | "task.paused" | "task.recovered" | "state.correction" | "project.archived" | "project.restored";
 
 export type WorkflowEvent = {
   id: string;

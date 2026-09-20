@@ -85,6 +85,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (method === "GET" && parts[3] === "state") { send(res, 200, { project, state: store.getStoryState(project.id) }); return; }
     if (method === "GET" && parts[3] === "chapters") { send(res, 200, { chapters: store.listChapters(project.id) }); return; }
     if (method === "GET" && parts[3] === "tasks") { send(res, 200, { tasks: store.listTasks(project.id) }); return; }
+    if (method === "GET" && parts[3] === "events") { send(res, 200, { events: store.listEvents(project.id) }); return; }
+    if (method === "GET" && parts[3] === "agents") { send(res, 200, { agents: store.listDynamicAgents(project.id) }); return; }
     if (method === "POST" && parts[3] === "generate") {
       if (project.status === "running") { send(res, 409, { error: "项目正在生成中" }); return; }
       if (store.listChapters(project.id).length > 0) { send(res, 409, { error: "项目已经生成过第一章，Phase 2 才会支持继续生成" }); return; }

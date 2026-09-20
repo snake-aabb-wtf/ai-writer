@@ -2,7 +2,7 @@
 
 ## 项目概览
 
-AI Writer 是一个单用户、多小说的自动化小说生产工作台。当前已完成 **Phase 4：Vite + React WebUI 工作台**；后续实现应以 [PLAN.md](/data1/project/AI%20Writer/PLAN.md) 为总体设计依据，并保持阶段边界清晰。
+AI Writer 是一个单用户、多小说的自动化小说生产工作台。当前已完成 **Phase 5：动态 Agent 与稳定性收尾**；后续实现应以 [PLAN.md](/data1/project/AI%20Writer/PLAN.md) 为总体设计依据，并保持阶段边界清晰。
 
 ## 技术栈与常用命令
 
@@ -27,7 +27,7 @@ AI Writer 是一个单用户、多小说的自动化小说生产工作台。当�
 - `src/domain/`：领域类型和状态模型。
 - `src/storage/`：SQLite 存储及数据不变量。
 - `src/model/`：OpenAI Chat Completions 兼容模型调用层；模型配置来自环境变量。
-- `src/workflows/`：工作流初始化和任务编排。
+- `src/workflows/`：工作流初始化、任务编排、动态 Agent 授权和故事智能。
 - `src/server.ts`：HTTP API 与静态 WebUI 服务。
 - `public/`：浏览器端界面。
 - `web/`：React 页面、组件和样式；不要把业务状态重新放回 `public/` 手写脚本。
@@ -50,9 +50,11 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 - 每章写入前生成 `consistencyReport`，检查人物不可逆状态、重复时间线事件、空正文和无来源伏笔回收；问题只追加为 `Correction`，不回改正文。
 - 伏笔记录首现章节和最近推进章节，高重要性伏笔长期未回收时生成 warning；warning 不会覆盖历史，也不会自动修改正文。
 - 阶段只有在模型显式返回 `stageComplete: true` 时才算完成；完成后把旧阶段追加到 `completedStages`，再根据事实检索结果规划下一阶段。
-- 当前仍没有完整的后台自动连载循环、动态 Agent、完整场景拆分或 WebUI 故事工作台；不要把 Phase 3 的规划/检查基础能力误写成这些功能已经完成。
+- Phase 5 提供动态 Agent 工厂：临时 Agent 默认无写权限，只能由总控按请求权限白名单授权；每个动态任务都有独立 `isolationKey`、授权过期时间和任务绑定，不能越权写入历史。
 - Phase 4 的 React 工作台展示多小说列表、创建项目、运行状态、阶段目标、人物、伏笔、时间线、任务日志和章节正文；生成、暂停/继续和刷新操作通过现有 API 完成。
 - Vite 生产构建输出到 `public/`，API 必须继续提供 `index.html`、`app.js` 和 `assets/` 静态资源；不要让前端开发服务器成为生产运行依赖。
+- Phase 5 的队列在重试、超时、暂停、失败和进程恢复时写入持久化 `workflow_events`；任务失败可以保留 `bestOutput`，最终失败不会丢掉当前最佳草稿。
+- `Store.saveStoryState(state, expectedRevision)` 支持乐观版本检查；动态 Agent 不能绕过工作流直接修改故事状态。
 
 主要项目接口还包括：
 
@@ -60,6 +62,8 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 - `GET /api/projects/:id`
 - `GET /api/projects/:id/state`
 - `GET /api/projects/:id/tasks`
+- `GET /api/projects/:id/events`
+- `GET /api/projects/:id/agents`
 - `GET /api/projects/:id/chapters`
 - `POST /api/projects/:id/pause`
 - `POST /api/projects/:id/resume`
@@ -95,9 +99,10 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 - `test/phase1.test.ts` 使用假的兼容模型验证 Phase 1 三步生成链路及结构化产物落库。
 - `test/phase2.test.ts` 验证复杂度分流、任务重试、超时、暂停、继续和 worker 重启恢复。
 - `test/phase3.test.ts` 验证事实检索、一致性问题、伏笔超期检测和阶段完成后的动态规划。
+- `test/phase5.test.ts` 验证动态 Agent 授权/隔离、最佳输出保留、事件日志、状态版本冲突和恢复事件。
 - 新增或改变 API/工作流行为时，优先补充规范测试，再修改实现；测试不得依赖真实云端 API。
 - 完成修改后至少执行：`npm run build && npm test`。若涉及 HTTP 路由，再做一次临时数据目录的启动级验收。
 
-## 下一阶段边界
+## 收尾边界
 
-Phase 5 才实现动态 Agent 工厂、总控授权、临时任务隔离、失败降级和完整恢复测试。WebUI 只是故事状态的观察和控制面，不是事实源；新增前端操作必须通过 API 和领域规则完成。
+Phase 0 至 Phase 5 共六个计划阶段已经完成。当前仍保留为后续演进的内容是：真正的多章节后台连载循环、完整场景拆分、BullMQ/Redis transport、多模型路由和外部平台发布。WebUI 只是故事状态的观察和控制面，不是事实源；新增前端操作必须通过 API 和领域规则完成。

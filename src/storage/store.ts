@@ -1,7 +1,15 @@
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Chapter, Project, StoryState, Task } from "../domain/types.js";
+import type { Chapter, DynamicAgent, Project, StoryState, Task, WorkflowEvent } from "../domain/types.js";
+
+export class StateConflictError extends Error {
+  constructor(projectId: string, expectedRevision: number, actualRevision: number) {
+    super(`故事状态版本冲突：项目 ${projectId} 期望 revision ${expectedRevision}，实际为 ${actualRevision}`);
+    this.name = "StateConflictError";
+  }
+}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -44,6 +52,26 @@ export class Store {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS chapters_project_number ON chapters(project_id, chapter_number);
       CREATE INDEX IF NOT EXISTS tasks_project_status ON tasks(project_id, status);
+      CREATE TABLE IF NOT EXISTS dynamic_agents (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS dynamic_agents_project ON dynamic_agents(project_id);
+      CREATE TABLE IF NOT EXISTS workflow_events (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        task_id TEXT,
+        agent_id TEXT,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS workflow_events_project_created ON workflow_events(project_id, created_at);
     `);
   }
 
@@ -75,7 +103,11 @@ export class Store {
     return row?.payload ? JSON.parse(row.payload) as StoryState : undefined;
   }
 
-  saveStoryState(state: StoryState): void {
+  saveStoryState(state: StoryState, expectedRevision?: number): void {
+    const current = this.db.prepare("SELECT revision FROM story_states WHERE project_id = ?").get(state.projectId) as { revision?: number } | undefined;
+    if (expectedRevision !== undefined && current?.revision !== expectedRevision) {
+      throw new StateConflictError(state.projectId, expectedRevision, current?.revision ?? -1);
+    }
     this.db.prepare("UPDATE story_states SET payload = ?, revision = ?, updated_at = ? WHERE project_id = ?")
       .run(JSON.stringify(state), state.revision, state.updatedAt, state.projectId);
   }
@@ -98,11 +130,46 @@ export class Store {
   createTask(task: Task): void {
     this.db.prepare("INSERT INTO tasks (id, project_id, status, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(task.id, task.projectId, task.status, JSON.stringify(task), task.createdAt, task.updatedAt);
+    this.appendEvent({ id: randomUUID(), projectId: task.projectId, type: "task.created", taskId: task.id, agentId: task.dynamicAgentId, payload: { kind: task.kind, agentRole: task.agentRole, isolationKey: task.isolationKey }, createdAt: task.createdAt });
   }
 
   updateTask(task: Task): void {
     this.db.prepare("UPDATE tasks SET status = ?, payload = ?, updated_at = ? WHERE id = ?")
       .run(task.status, JSON.stringify(task), task.updatedAt, task.id);
+  }
+
+  createDynamicAgent(agent: DynamicAgent): void {
+    this.db.prepare("INSERT INTO dynamic_agents (id, project_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(agent.id, agent.projectId, JSON.stringify(agent), agent.createdAt, agent.updatedAt);
+  }
+
+  updateDynamicAgent(agent: DynamicAgent): void {
+    this.db.prepare("UPDATE dynamic_agents SET payload = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(agent), agent.updatedAt, agent.id);
+  }
+
+  getDynamicAgent(id: string): DynamicAgent | undefined {
+    const row = this.db.prepare("SELECT payload FROM dynamic_agents WHERE id = ?").get(id) as { payload?: string } | undefined;
+    return row?.payload ? JSON.parse(row.payload) as DynamicAgent : undefined;
+  }
+
+  listDynamicAgents(projectId?: string): DynamicAgent[] {
+    const rows = projectId
+      ? this.db.prepare("SELECT payload FROM dynamic_agents WHERE project_id = ? ORDER BY created_at ASC").all(projectId) as Array<{ payload: string }>
+      : this.db.prepare("SELECT payload FROM dynamic_agents ORDER BY created_at ASC").all() as Array<{ payload: string }>;
+    return rows.map((row) => JSON.parse(row.payload) as DynamicAgent);
+  }
+
+  appendEvent(event: WorkflowEvent): void {
+    this.db.prepare("INSERT INTO workflow_events (id, project_id, event_type, task_id, agent_id, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(event.id, event.projectId, event.type, event.taskId ?? null, event.agentId ?? null, JSON.stringify(event.payload), event.createdAt);
+  }
+
+  listEvents(projectId?: string): WorkflowEvent[] {
+    const rows = projectId
+      ? this.db.prepare("SELECT id, project_id, event_type, task_id, agent_id, payload, created_at FROM workflow_events WHERE project_id = ? ORDER BY created_at ASC").all(projectId) as Array<{ id: string; project_id: string; event_type: WorkflowEvent["type"]; task_id?: string | null; agent_id?: string | null; payload: string; created_at: string }>
+      : this.db.prepare("SELECT id, project_id, event_type, task_id, agent_id, payload, created_at FROM workflow_events ORDER BY created_at ASC").all() as Array<{ id: string; project_id: string; event_type: WorkflowEvent["type"]; task_id?: string | null; agent_id?: string | null; payload: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, projectId: row.project_id, type: row.event_type, taskId: row.task_id ?? undefined, agentId: row.agent_id ?? undefined, payload: JSON.parse(row.payload), createdAt: row.created_at }));
   }
 
   getTask(id: string): Task | undefined {

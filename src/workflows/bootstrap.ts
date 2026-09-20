@@ -203,6 +203,9 @@ async function reviewChapter(store: Store, model: ChatModel, project: Project, c
   let nextState = corrections.length > 0
     ? { ...state, corrections: [...state.corrections, ...corrections], revision: state.revision + 1, updatedAt: now() }
     : state;
+  for (const correction of corrections) {
+    store.appendEvent({ id: randomUUID(), projectId: project.id, type: "state.correction", taskId: chapter.sourceTaskId, payload: correction, createdAt: correction.createdAt });
+  }
   if (stageCompleted && state.currentStagePlan) {
     const completedStages = [...(nextState.completedStages ?? []), { ...state.currentStagePlan }];
     const nextStage = await generateNextStage(model, project, { ...nextState, completedStages });

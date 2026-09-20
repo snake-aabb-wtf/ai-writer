@@ -108,10 +108,46 @@ export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "paused
 
 export type CoreAgentRole = "orchestrator" | "world-builder" | "planner" | "writer" | "continuity" | "memory";
 
+export type AgentCapability = "read-story" | "read-chapters" | "propose-draft" | "write-current-task" | "append-story-state";
+
+export type DynamicAgentStatus = "created" | "authorized" | "completed" | "revoked" | "expired";
+
+export type DynamicAgent = {
+  id: string;
+  projectId: string;
+  purpose: string;
+  requestedCapabilities: AgentCapability[];
+  grantedCapabilities: AgentCapability[];
+  status: DynamicAgentStatus;
+  taskId?: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentAuthorization = {
+  agentId: string;
+  taskId: string;
+  grantedCapabilities: AgentCapability[];
+  expiresAt: string;
+};
+
+export type WorkflowEventType = "agent.created" | "agent.authorized" | "agent.revoked" | "task.created" | "task.claimed" | "task.retry" | "task.succeeded" | "task.failed" | "task.paused" | "task.recovered" | "state.correction";
+
+export type WorkflowEvent = {
+  id: string;
+  projectId: string;
+  type: WorkflowEventType;
+  taskId?: string;
+  agentId?: string;
+  payload: unknown;
+  createdAt: string;
+};
+
 export type Task = {
   id: string;
   projectId: string;
-  kind: "bootstrap" | "produce-chapter" | "produce-scene" | "review" | "plan-stage" | "assess-complexity";
+  kind: "bootstrap" | "produce-chapter" | "produce-scene" | "review" | "plan-stage" | "assess-complexity" | "dynamic-special";
   status: TaskStatus;
   input: unknown;
   output?: unknown;
@@ -120,7 +156,11 @@ export type Task = {
   maxAttempts?: number;
   timeoutMs?: number;
   availableAt?: string;
-  agentRole?: CoreAgentRole;
+  agentRole?: CoreAgentRole | "dynamic";
+  dynamicAgentId?: string;
+  isolationKey?: string;
+  authorization?: AgentAuthorization;
+  bestOutput?: unknown;
   createdAt: string;
   updatedAt: string;
 };

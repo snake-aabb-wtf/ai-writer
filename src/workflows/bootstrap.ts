@@ -12,6 +12,9 @@ import type {
 } from "../domain/types.js";
 import { OpenAICompatibleClient, type ChatMessage } from "../model/openai.js";
 import { Store } from "../storage/store.js";
+import { assessChapterComplexity, type ComplexityAssessment } from "./complexity.js";
+import { roleForTask } from "./agents.js";
+import { TaskPausedError, TaskQueue } from "./queue.js";
 
 type ChatModel = Pick<OpenAICompatibleClient, "configured" | "chat">;
 
@@ -97,20 +100,7 @@ async function ask(model: ChatModel, messages: ChatMessage[], fallback: string):
 
 export function makeTask(projectId: string, kind: Task["kind"], input: unknown = {}): Task {
   const createdAt = now();
-  return { id: randomUUID(), projectId, kind, status: "queued", input, attempts: 0, createdAt, updatedAt: createdAt };
-}
-
-async function runTask<T>(store: Store, task: Task, operation: () => Promise<T>): Promise<T> {
-  const running: Task = { ...task, status: "running", attempts: task.attempts + 1, updatedAt: now() };
-  store.updateTask(running);
-  try {
-    const output = await operation();
-    store.updateTask({ ...running, status: "succeeded", output, updatedAt: now() });
-    return output;
-  } catch (error) {
-    store.updateTask({ ...running, status: "failed", error: error instanceof Error ? error.message : String(error), updatedAt: now() });
-    throw error;
-  }
+  return { id: randomUUID(), projectId, kind, status: "queued", input, attempts: 0, maxAttempts: 3, timeoutMs: 120_000, availableAt: createdAt, agentRole: roleForTask(kind), createdAt, updatedAt: createdAt };
 }
 
 async function generateBootstrap(store: Store, model: ChatModel, project: Project, task: Task): Promise<StoryState> {
@@ -121,7 +111,6 @@ async function generateBootstrap(store: Store, model: ChatModel, project: Projec
   const generated = parseBootstrap(raw);
   const next: StoryState = { ...state, theme: generated.theme || project.premise, endingDirection: generated.endingDirection || state.endingDirection, bible: { summary: generated.summary || project.premise, rules: generated.rules, locations: generated.locations, factions: generated.factions }, characters: generated.characters.map((character) => ({ ...character, id: randomUUID(), status: "active" as const })), revision: state.revision + 1, updatedAt: now() };
   store.saveStoryState(next);
-  store.updateTask({ ...task, output: { stateRevision: next.revision, characterCount: next.characters.length }, updatedAt: now() });
   return next;
 }
 
@@ -133,7 +122,6 @@ async function generateStage(store: Store, model: ChatModel, project: Project, t
   const stage = parseStage(raw);
   const next: StoryState = { ...state, currentStagePlan: stage, revision: state.revision + 1, updatedAt: now() };
   store.saveStoryState(next);
-  store.updateTask({ ...task, output: { stateRevision: next.revision, stageTitle: stage.title }, updatedAt: now() });
   return next;
 }
 
@@ -178,31 +166,49 @@ async function generateChapter(store: Store, model: ChatModel, project: Project,
   const raw = await ask(model, [{ role: "system", content: "你是小说写作 Agent。只输出 JSON，不要 Markdown。字段必须是 title、summary、body、characterUpdates、timelineEvents、foreshadowing。body 必须是完整的中文章节正文；characterUpdates 记录本章后人物状态；timelineEvents 记录本章事件；foreshadowing 记录新增、推进或回收的伏笔。" }, { role: "user", content: JSON.stringify({ project, storyState: state, chapterNumber: number }) }], JSON.stringify(fallback));
   const generated = parseChapter(raw);
   const chapterId = randomUUID();
-  const chapter: Chapter = { id: chapterId, projectId: project.id, number, title: generated.title, summary: generated.summary, body: generated.body, createdAt: now(), sourceTaskId: task.id };
+  const productionMode = task.kind === "produce-scene" ? "scene" : "chapter";
+  const chapter: Chapter = { id: chapterId, projectId: project.id, number, title: generated.title, summary: generated.summary, body: generated.body, createdAt: now(), sourceTaskId: task.id, productionMode };
   store.appendChapter(chapter);
   store.saveStoryState({ ...state, characters: applyCharacterUpdates(state.characters, generated.characterUpdates), timeline: applyTimelineEvents(state.timeline, generated.timelineEvents, chapterId), foreshadowing: applyForeshadowing(state.foreshadowing, generated.foreshadowing, chapterId), revision: state.revision + 1, updatedAt: now() });
-  store.updateTask({ ...task, output: { chapterId, chapterNumber: number }, updatedAt: now() });
   return chapter;
+}
+
+async function runQueuedTask<T>(queue: TaskQueue, task: Task, operation: (runningTask: Task) => Promise<T>): Promise<T> {
+  const results = await queue.drain(operation, { projectId: task.projectId, maxJobs: task.maxAttempts ?? 3 });
+  const result = results.at(-1);
+  if (!result) throw new Error(`任务 ${task.id} 未执行`);
+  if (result.state === "succeeded") return result.task.output as T;
+  if (result.state === "paused") throw new TaskPausedError(task.projectId);
+  throw new Error(result.task.error || `任务 ${task.id} 执行失败`);
 }
 
 export async function runPhaseOne(store: Store, model: ChatModel, project: Project): Promise<Chapter> {
   if (store.listChapters(project.id).length > 0) throw new Error("项目已经生成过章节，不能重复运行 Phase 1");
+  const queue = new TaskQueue(store);
   const runningProject: Project = { ...project, status: "running", currentStage: "phase1-running", updatedAt: now() };
   store.updateProject(runningProject);
   try {
     const bootstrapTask = makeTask(project.id, "bootstrap", { phase: 1, step: "bootstrap" });
     store.createTask(bootstrapTask);
-    const state = await runTask(store, bootstrapTask, () => generateBootstrap(store, model, project, bootstrapTask));
+    const state = await runQueuedTask(queue, bootstrapTask, (task) => generateBootstrap(store, model, project, task));
     const stageTask = makeTask(project.id, "plan-stage", { phase: 1, step: "plan-stage" });
     store.createTask(stageTask);
-    await runTask(store, stageTask, () => generateStage(store, model, project, stageTask));
-    const chapterTask = makeTask(project.id, "produce-chapter", { phase: 1, step: "produce-chapter", basedOnRevision: state.revision + 1 });
+    const plannedState = await runQueuedTask(queue, stageTask, (task) => generateStage(store, model, project, task));
+    const complexityTask = makeTask(project.id, "assess-complexity", { phase: 2, step: "assess-complexity", basedOnRevision: plannedState.revision });
+    store.createTask(complexityTask);
+    const assessment = await runQueuedTask<ComplexityAssessment>(queue, complexityTask, async () => assessChapterComplexity(project, plannedState));
+    const chapterKind = assessment.mode === "scene" ? "produce-scene" : "produce-chapter";
+    const chapterTask = makeTask(project.id, chapterKind, { phase: 2, step: chapterKind, productionMode: assessment.mode, complexity: assessment });
     store.createTask(chapterTask);
-    const chapter = await runTask(store, chapterTask, () => generateChapter(store, model, project, chapterTask));
+    const chapter = await runQueuedTask<Chapter>(queue, chapterTask, (task) => generateChapter(store, model, project, task));
     store.updateProject({ ...runningProject, status: "paused", currentStage: "chapter-1-complete", updatedAt: now() });
     return chapter;
   } catch (error) {
-    store.updateProject({ ...runningProject, status: "error", currentStage: "phase1-error", updatedAt: now() });
+    if (error instanceof TaskPausedError) {
+      store.updateProject({ ...runningProject, status: "paused", currentStage: "paused", updatedAt: now() });
+    } else {
+      store.updateProject({ ...runningProject, status: "error", currentStage: "phase1-error", updatedAt: now() });
+    }
     throw error;
   }
 }

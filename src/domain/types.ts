@@ -80,19 +80,28 @@ export type Chapter = {
   body: string;
   createdAt: string;
   sourceTaskId?: string;
+  productionMode?: ProductionMode;
 };
 
+export type ProductionMode = "chapter" | "scene";
+
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "paused";
+
+export type CoreAgentRole = "orchestrator" | "world-builder" | "planner" | "writer" | "continuity" | "memory";
 
 export type Task = {
   id: string;
   projectId: string;
-  kind: "bootstrap" | "produce-chapter" | "review" | "plan-stage";
+  kind: "bootstrap" | "produce-chapter" | "produce-scene" | "review" | "plan-stage" | "assess-complexity";
   status: TaskStatus;
   input: unknown;
   output?: unknown;
   error?: string;
   attempts: number;
+  maxAttempts?: number;
+  timeoutMs?: number;
+  availableAt?: string;
+  agentRole?: CoreAgentRole;
   createdAt: string;
   updatedAt: string;
 };

@@ -105,8 +105,37 @@ export class Store {
       .run(task.status, JSON.stringify(task), task.updatedAt, task.id);
   }
 
-  listTasks(projectId: string): Task[] {
-    const rows = this.db.prepare("SELECT payload FROM tasks WHERE project_id = ? ORDER BY created_at DESC").all(projectId) as Array<{ payload: string }>;
+  getTask(id: string): Task | undefined {
+    const row = this.db.prepare("SELECT payload FROM tasks WHERE id = ?").get(id) as { payload?: string } | undefined;
+    return row?.payload ? JSON.parse(row.payload) as Task : undefined;
+  }
+
+  listTasks(projectId?: string): Task[] {
+    const rows = projectId
+      ? this.db.prepare("SELECT payload FROM tasks WHERE project_id = ? ORDER BY created_at DESC").all(projectId) as Array<{ payload: string }>
+      : this.db.prepare("SELECT payload FROM tasks ORDER BY created_at ASC").all() as Array<{ payload: string }>;
     return rows.map((row) => JSON.parse(row.payload) as Task);
+  }
+
+  claimNextTask(projectId?: string, at = new Date().toISOString()): Task | undefined {
+    const candidates = this.listTasks(projectId)
+      .filter((task) => task.status === "queued" && (!task.availableAt || task.availableAt <= at));
+    const candidate = candidates[0];
+    if (!candidate) return undefined;
+    const claimed: Task = { ...candidate, status: "running", attempts: candidate.attempts + 1, updatedAt: at };
+    this.updateTask(claimed);
+    return claimed;
+  }
+
+  pauseQueuedTasks(projectId: string, at = new Date().toISOString()): void {
+    for (const task of this.listTasks(projectId)) {
+      if (task.status === "queued") this.updateTask({ ...task, status: "paused", error: "项目已暂停", updatedAt: at });
+    }
+  }
+
+  resumePausedTasks(projectId: string, at = new Date().toISOString()): void {
+    for (const task of this.listTasks(projectId)) {
+      if (task.status === "paused") this.updateTask({ ...task, status: "queued", error: undefined, availableAt: at, updatedAt: at });
+    }
   }
 }

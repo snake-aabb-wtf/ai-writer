@@ -8,10 +8,13 @@ import type { CreateProjectInput, Project, StoryState, Task } from "./domain/typ
 import { OpenAICompatibleClient } from "./model/openai.js";
 import { Store } from "./storage/store.js";
 import { runPhaseOne } from "./workflows/bootstrap.js";
+import { TaskQueue } from "./workflows/queue.js";
 
 const config = loadConfig();
 const store = new Store(config.dataDir);
 const model = new OpenAICompatibleClient(config);
+const queue = new TaskQueue(store);
+queue.recoverInterruptedTasks();
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" });
@@ -63,8 +66,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       startPhaseOne(project);
       send(res, 202, { project: store.getProject(project.id), message: "Phase 1 已开始执行" }); return;
     }
-    if (method === "POST" && parts[3] === "pause") { const next = { ...project, status: "paused" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); send(res, 200, { project: next }); return; }
-    if (method === "POST" && parts[3] === "resume") { const next = { ...project, status: "running" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); send(res, 200, { project: next }); return; }
+    if (method === "POST" && parts[3] === "pause") { const next = { ...project, status: "paused" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); store.pauseQueuedTasks(project.id, next.updatedAt); send(res, 200, { project: next, tasks: store.listTasks(project.id) }); return; }
+    if (method === "POST" && parts[3] === "resume") { const next = { ...project, status: "running" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); store.resumePausedTasks(project.id, next.updatedAt); send(res, 200, { project: next, tasks: store.listTasks(project.id) }); return; }
   }
   send(res, 404, { error: "路由不存在" });
 }

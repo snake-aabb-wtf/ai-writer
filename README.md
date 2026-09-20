@@ -28,6 +28,21 @@ npm run dev:web   # Vite + React
 
 Windows 用户可以先复制并填写 `.env`，然后双击 `start.bat` 启动；Linux/macOS 用户运行 `./start.sh`。两个脚本都会使用 Node 24 的 `--env-file=.env` 加载模型配置，若尚未构建则先执行 `npm run build`。
 
+### Linux + Nginx 部署
+
+仓库的 `deploy/` 提供了持久化服务和 Nginx 反代模板。当前部署使用三级域名 **`aiwriter.Luminthalia.top`**，Node 服务只监听本机 `4317` 端口：
+
+```bash
+sudo install -o root -g root -m 0644 deploy/ai-writer.service /etc/systemd/system/ai-writer.service
+sudo install -o root -g root -m 0644 deploy/nginx-aiwriter.conf /etc/nginx/sites-available/aiwriter
+sudo ln -s /etc/nginx/sites-available/aiwriter /etc/nginx/sites-enabled/aiwriter
+sudo nginx -t && sudo systemctl daemon-reload
+sudo systemctl enable --now ai-writer.service
+sudo systemctl reload nginx
+```
+
+先为 `aiwriter.Luminthalia.top` 添加指向服务器公网 IP 的 DNS A 记录；DNS 生效后，再运行 `sudo certbot --nginx -d aiwriter.Luminthalia.top --redirect` 开启 HTTPS。
+
 ## API 快速验证
 
 ```bash

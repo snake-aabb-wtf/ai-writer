@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Writer</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #10131a; color: #edf2f7; }
+      body { margin: 0; } main { max-width: 1180px; margin: 0 auto; padding: 32px 20px 64px; }
+      header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+      h1 { margin: 0; font-size: 30px; } h2 { font-size: 18px; margin-top: 0; }
+      .muted { color: #96a0b5; } .grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+      section, .card { background: #181d27; border: 1px solid #2a3342; border-radius: 14px; padding: 18px; }
+      label { display: block; color: #b8c1d1; font-size: 13px; margin: 14px 0 6px; }
+      input, textarea { width: 100%; box-sizing: border-box; background: #0f131a; color: #edf2f7; border: 1px solid #374357; border-radius: 8px; padding: 10px; font: inherit; }
+      textarea { min-height: 100px; resize: vertical; } button { border: 0; border-radius: 8px; padding: 10px 14px; background: #647cff; color: white; cursor: pointer; }
+      button.secondary { background: #303a4d; } button:disabled { opacity: .5; cursor: wait; }
+      .project { cursor: pointer; padding: 14px; border: 1px solid #2a3342; border-radius: 10px; margin: 10px 0; }
+      .project:hover, .project.active { border-color: #7184ff; background: #20283a; }
+      .status { display: inline-block; padding: 3px 8px; border-radius: 99px; background: #303a4d; font-size: 12px; }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; } pre { white-space: pre-wrap; word-break: break-word; color: #cbd5e1; }
+      @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body><main>
+    <header><div><h1>AI Writer</h1><div class="muted">单用户多小说自动化生产工作台 · MVP</div></div><span id="health" class="muted">连接中…</span></header>
+    <div class="grid">
+      <section>
+        <h2>创建小说</h2>
+        <form id="create-form">
+          <label>小说名称<input name="name" required placeholder="例如：雾城失踪者" /></label>
+          <label>小说类型<input name="genre" required placeholder="可自定义，例如：科幻悬疑" /></label>
+          <label>文风描述<input name="style" required placeholder="例如：冷峻、克制、节奏紧凑" /></label>
+          <label>灵感 / 梗概 / 完整设定<textarea name="premise" required placeholder="从一句话到完整设定都可以"></textarea></label>
+          <label><input name="autoStart" type="checkbox" /> 创建后自动初始化设定</label>
+          <button type="submit">创建项目</button>
+        </form>
+      </section>
+      <section>
+        <div class="row" style="justify-content:space-between"><h2>项目与状态</h2><button class="secondary" id="refresh">刷新</button></div>
+        <div id="projects" class="muted">暂无项目</div>
+        <div id="detail" style="margin-top:20px"></div>
+      </section>
+    </div>
+  </main><script src="/app.js"></script></body>
+</html>

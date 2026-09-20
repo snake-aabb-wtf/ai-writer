@@ -1,6 +1,6 @@
 {
   "name": "ai-writer",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "单用户多小说的自动化小说生产工作台",

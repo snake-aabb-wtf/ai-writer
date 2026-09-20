@@ -19,6 +19,7 @@ export type StoryState = {
   endingDirection: string;
   bible: { summary: string; rules: string[]; locations: string[]; factions: string[] };
   currentStagePlan?: StoryStage | null;
+  completedStages?: StoryStage[];
   characters: Character[];
   timeline: TimelineEvent[];
   foreshadowing: Foreshadowing[];
@@ -33,6 +34,20 @@ export type StoryStage = {
   conflict: string;
   progression: string[];
   chapterGoal: string;
+};
+
+export type ConsistencySeverity = "warning" | "error";
+
+export type ConsistencyIssue = {
+  code: "empty-body" | "character-resurrection" | "duplicate-timeline" | "dangling-foreshadowing" | "overdue-foreshadowing";
+  severity: ConsistencySeverity;
+  message: string;
+};
+
+export type ConsistencyReport = {
+  ok: boolean;
+  issues: ConsistencyIssue[];
+  checkedAt: string;
 };
 
 export type Character = {
@@ -59,6 +74,8 @@ export type Foreshadowing = {
   status: "open" | "advanced" | "resolved";
   firstChapterId?: string;
   resolvedChapterId?: string;
+  firstChapterNumber?: number;
+  lastAdvancedChapterNumber?: number;
   createdAt: string;
 };
 
@@ -81,6 +98,8 @@ export type Chapter = {
   createdAt: string;
   sourceTaskId?: string;
   productionMode?: ProductionMode;
+  stageComplete?: boolean;
+  consistencyReport?: ConsistencyReport;
 };
 
 export type ProductionMode = "chapter" | "scene";
@@ -133,4 +152,5 @@ export type GeneratedChapter = {
     importance: Foreshadowing["importance"];
     status?: Foreshadowing["status"];
   }>;
+  stageComplete?: boolean;
 };

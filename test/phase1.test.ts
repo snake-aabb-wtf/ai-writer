@@ -41,14 +41,15 @@ describe("Phase 1", () => {
     assert.equal(chapter.number, 1);
     assert.equal(chapter.title, "第一封信");
     assert.equal(savedProject?.status, "paused");
-    assert.equal(savedProject?.currentStage, "chapter-1-complete");
+    assert.equal(savedProject?.currentStage, "chapter-1-reviewed");
     assert.equal(savedState?.revision, 4);
     assert.equal(savedState?.characters[0]?.name, "林岚");
     assert.equal(savedState?.currentStagePlan?.title, "月背的回声");
     assert.equal(savedState?.timeline[0]?.sourceChapterId, chapter.id);
     assert.equal(savedState?.foreshadowing[0]?.firstChapterId, chapter.id);
-    assert.deepEqual(tasks.map((task) => [task.kind, task.status]), [["produce-chapter", "succeeded"], ["assess-complexity", "succeeded"], ["plan-stage", "succeeded"], ["bootstrap", "succeeded"]]);
+    assert.deepEqual(tasks.map((task) => [task.kind, task.status]), [["review", "succeeded"], ["produce-chapter", "succeeded"], ["assess-complexity", "succeeded"], ["plan-stage", "succeeded"], ["bootstrap", "succeeded"]]);
     assert.deepEqual((tasks.find((task) => task.kind === "assess-complexity")?.output as { mode?: string } | undefined)?.mode, "chapter");
+    assert.equal(chapter.consistencyReport?.ok, true);
     assert.rejects(() => runPhaseOne(store, model, project), /已经生成过章节/);
     store.close();
   });

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   Character,
   Chapter,
+  ConsistencyReport,
   Foreshadowing,
   GeneratedChapter,
   Project,
@@ -15,6 +16,7 @@ import { Store } from "../storage/store.js";
 import { assessChapterComplexity, type ComplexityAssessment } from "./complexity.js";
 import { roleForTask } from "./agents.js";
 import { TaskPausedError, TaskQueue } from "./queue.js";
+import { inspectGeneratedChapter, isStageComplete, retrieveStoryFacts, reviewForeshadowing } from "./story-intelligence.js";
 
 type ChatModel = Pick<OpenAICompatibleClient, "configured" | "chat">;
 
@@ -79,7 +81,7 @@ function parseChapter(raw: string): GeneratedChapter {
     const status = clue.status;
     return { summary: text(clue.summary, "一个尚未解释的线索"), importance: importance === "high" || importance === "medium" || importance === "low" ? importance : "medium", status: status === "advanced" || status === "resolved" || status === "open" ? status : "open" };
   }) : [];
-  return { title: text(value.title, "第一章"), summary: text(value.summary, "故事从这里开始"), body: text(value.body, "故事从一个异常的瞬间开始。"), characterUpdates, timelineEvents, foreshadowing };
+  return { title: text(value.title, "第一章"), summary: text(value.summary, "故事从这里开始"), body: text(value.body, "故事从一个异常的瞬间开始。"), characterUpdates, timelineEvents, foreshadowing, stageComplete: value.stageComplete === true };
 }
 
 function fallbackBootstrap(project: Project): BootstrapOutput {
@@ -143,15 +145,15 @@ function applyTimelineEvents(events: TimelineEvent[], updates: GeneratedChapter[
   return [...events, ...updates.map((event) => ({ id: randomUUID(), occurredAt: event.occurredAt, summary: event.summary, sourceChapterId: chapterId, createdAt: now() }))];
 }
 
-function applyForeshadowing(items: Foreshadowing[], updates: GeneratedChapter["foreshadowing"], chapterId: string): Foreshadowing[] {
+function applyForeshadowing(items: Foreshadowing[], updates: GeneratedChapter["foreshadowing"], chapterId: string, chapterNumber: number): Foreshadowing[] {
   const result = items.map((item) => ({ ...item }));
   for (const update of updates) {
     const index = result.findIndex((item) => item.summary === update.summary);
     if (index >= 0) {
       const current = result[index];
-      if (current) result[index] = { ...current, status: update.status || current.status, resolvedChapterId: update.status === "resolved" ? chapterId : current.resolvedChapterId };
+      if (current) result[index] = { ...current, status: update.status || current.status, lastAdvancedChapterNumber: chapterNumber, resolvedChapterId: update.status === "resolved" ? chapterId : current.resolvedChapterId };
     } else {
-      result.push({ id: randomUUID(), summary: update.summary, importance: update.importance, status: update.status || "open", firstChapterId: chapterId, createdAt: now() });
+      result.push({ id: randomUUID(), summary: update.summary, importance: update.importance, status: update.status || "open", firstChapterId: chapterId, firstChapterNumber: chapterNumber, lastAdvancedChapterNumber: chapterNumber, createdAt: now() });
     }
   }
   return result;
@@ -166,11 +168,48 @@ async function generateChapter(store: Store, model: ChatModel, project: Project,
   const raw = await ask(model, [{ role: "system", content: "你是小说写作 Agent。只输出 JSON，不要 Markdown。字段必须是 title、summary、body、characterUpdates、timelineEvents、foreshadowing。body 必须是完整的中文章节正文；characterUpdates 记录本章后人物状态；timelineEvents 记录本章事件；foreshadowing 记录新增、推进或回收的伏笔。" }, { role: "user", content: JSON.stringify({ project, storyState: state, chapterNumber: number }) }], JSON.stringify(fallback));
   const generated = parseChapter(raw);
   const chapterId = randomUUID();
+  const consistencyReport = inspectGeneratedChapter(state, generated);
   const productionMode = task.kind === "produce-scene" ? "scene" : "chapter";
-  const chapter: Chapter = { id: chapterId, projectId: project.id, number, title: generated.title, summary: generated.summary, body: generated.body, createdAt: now(), sourceTaskId: task.id, productionMode };
+  const chapter: Chapter = { id: chapterId, projectId: project.id, number, title: generated.title, summary: generated.summary, body: generated.body, createdAt: now(), sourceTaskId: task.id, productionMode, stageComplete: generated.stageComplete, consistencyReport };
   store.appendChapter(chapter);
-  store.saveStoryState({ ...state, characters: applyCharacterUpdates(state.characters, generated.characterUpdates), timeline: applyTimelineEvents(state.timeline, generated.timelineEvents, chapterId), foreshadowing: applyForeshadowing(state.foreshadowing, generated.foreshadowing, chapterId), revision: state.revision + 1, updatedAt: now() });
+  store.saveStoryState({ ...state, characters: applyCharacterUpdates(state.characters, generated.characterUpdates), timeline: applyTimelineEvents(state.timeline, generated.timelineEvents, chapterId), foreshadowing: applyForeshadowing(state.foreshadowing, generated.foreshadowing, chapterId, number), revision: state.revision + 1, updatedAt: now() });
   return chapter;
+}
+
+function correctionTarget(code: ConsistencyReport["issues"][number]["code"]): "character" | "timeline" | "foreshadowing" | "bible" {
+  if (code === "character-resurrection") return "character";
+  if (code === "duplicate-timeline") return "timeline";
+  if (code === "dangling-foreshadowing" || code === "overdue-foreshadowing") return "foreshadowing";
+  return "bible";
+}
+
+async function generateNextStage(model: ChatModel, project: Project, state: StoryState): Promise<StoryStage> {
+  const facts = retrieveStoryFacts(state, [], "", 20);
+  const fallback: StoryStage = { title: "下一幕：线索继续", objective: "承接上一阶段留下的后果", conflict: "新的阻力迫使人物改变行动策略", progression: ["承接已完成阶段", "扩大核心冲突"], chapterGoal: "让新的阶段目标变得可执行，并留下下一步动力。" };
+  const raw = await ask(model, [{ role: "system", content: "你是动态总纲规划 Agent。只输出 JSON，不要 Markdown。字段必须是 title、objective、conflict、progression、chapterGoal。只能基于已经发生的故事事实规划下一阶段，不得修改过去。" }, { role: "user", content: JSON.stringify({ project: { genre: project.genre, style: project.style, premise: project.premise }, completedStages: state.completedStages ?? [], facts }) }], JSON.stringify(fallback));
+  return parseStage(raw);
+}
+
+async function reviewChapter(store: Store, model: ChatModel, project: Project, chapter: Chapter): Promise<{ report: ConsistencyReport; factCount: number; openForeshadowing: number; stageCompleted: boolean }> {
+  const state = store.getStoryState(project.id);
+  if (!state) throw new Error("项目故事状态不存在");
+  const chapters = store.listChapters(project.id);
+  const facts = retrieveStoryFacts(state, chapters, "", 50);
+  const foreshadowingReview = reviewForeshadowing(state.foreshadowing, chapter.number);
+  const baseReport = chapter.consistencyReport ?? { ok: true, issues: [], checkedAt: now() };
+  const report: ConsistencyReport = { ok: baseReport.ok, issues: [...baseReport.issues, ...foreshadowingReview.issues], checkedAt: now() };
+  const corrections = report.issues.map((issue) => ({ id: randomUUID(), targetType: correctionTarget(issue.code), reason: issue.message, replacement: "保留历史事实，由后续剧情解释或绕开该问题。", createdAt: now() }));
+  const stageCompleted = isStageComplete(state, chapter);
+  let nextState = corrections.length > 0
+    ? { ...state, corrections: [...state.corrections, ...corrections], revision: state.revision + 1, updatedAt: now() }
+    : state;
+  if (stageCompleted && state.currentStagePlan) {
+    const completedStages = [...(nextState.completedStages ?? []), { ...state.currentStagePlan }];
+    const nextStage = await generateNextStage(model, project, { ...nextState, completedStages });
+    nextState = { ...nextState, completedStages, currentStagePlan: nextStage, revision: nextState.revision + 1, updatedAt: now() };
+  }
+  if (nextState !== state) store.saveStoryState(nextState);
+  return { report, factCount: facts.length, openForeshadowing: foreshadowingReview.openCount, stageCompleted };
 }
 
 async function runQueuedTask<T>(queue: TaskQueue, task: Task, operation: (runningTask: Task) => Promise<T>): Promise<T> {
@@ -201,7 +240,10 @@ export async function runPhaseOne(store: Store, model: ChatModel, project: Proje
     const chapterTask = makeTask(project.id, chapterKind, { phase: 2, step: chapterKind, productionMode: assessment.mode, complexity: assessment });
     store.createTask(chapterTask);
     const chapter = await runQueuedTask<Chapter>(queue, chapterTask, (task) => generateChapter(store, model, project, task));
-    store.updateProject({ ...runningProject, status: "paused", currentStage: "chapter-1-complete", updatedAt: now() });
+    const reviewTask = makeTask(project.id, "review", { phase: 3, step: "review-chapter", chapterId: chapter.id });
+    store.createTask(reviewTask);
+    const review = await runQueuedTask(queue, reviewTask, () => reviewChapter(store, model, project, chapter));
+    store.updateProject({ ...runningProject, status: "paused", currentStage: review.stageCompleted ? "next-stage-planned" : "chapter-1-reviewed", updatedAt: now() });
     return chapter;
   } catch (error) {
     if (error instanceof TaskPausedError) {

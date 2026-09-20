@@ -18,12 +18,21 @@ export type StoryState = {
   theme: string;
   endingDirection: string;
   bible: { summary: string; rules: string[]; locations: string[]; factions: string[] };
+  currentStagePlan?: StoryStage | null;
   characters: Character[];
   timeline: TimelineEvent[];
   foreshadowing: Foreshadowing[];
   corrections: Correction[];
   revision: number;
   updatedAt: string;
+};
+
+export type StoryStage = {
+  title: string;
+  objective: string;
+  conflict: string;
+  progression: string[];
+  chapterGoal: string;
 };
 
 export type Character = {
@@ -95,4 +104,24 @@ export type CreateProjectInput = {
   style: string;
   premise: string;
   autoStart?: boolean;
+};
+
+export type GeneratedChapter = {
+  title: string;
+  summary: string;
+  body: string;
+  characterUpdates: Array<{
+    id?: string;
+    name: string;
+    role?: string;
+    motivation?: string;
+    status?: Character["status"];
+    note: string;
+  }>;
+  timelineEvents: Array<{ occurredAt: string; summary: string }>;
+  foreshadowing: Array<{
+    summary: string;
+    importance: Foreshadowing["importance"];
+    status?: Foreshadowing["status"];
+  }>;
 };

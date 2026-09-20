@@ -7,7 +7,7 @@ import { loadConfig } from "./config.js";
 import type { CreateProjectInput, Project, StoryState, Task } from "./domain/types.js";
 import { OpenAICompatibleClient } from "./model/openai.js";
 import { Store } from "./storage/store.js";
-import { bootstrapProject, makeBootstrapTask } from "./workflows/bootstrap.js";
+import { runPhaseOne } from "./workflows/bootstrap.js";
 
 const config = loadConfig();
 const store = new Store(config.dataDir);
@@ -27,6 +27,12 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 
 function route(pathname: string): string[] { return pathname.split("/").filter(Boolean); }
 
+function startPhaseOne(project: Project): void {
+  void runPhaseOne(store, model, project).catch((error: unknown) => {
+    console.error(`Phase 1 执行失败：${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const method = req.method ?? "GET";
   const parts = route(new URL(req.url ?? "/", "http://localhost").pathname);
@@ -40,11 +46,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (!input.name || !input.genre || !input.style || !input.premise) { send(res, 400, { error: "name、genre、style、premise 均为必填项" }); return; }
     const now = new Date().toISOString();
     const project: Project = { id: randomUUID(), name: input.name, language: input.language ?? "中文简体", genre: input.genre, style: input.style, premise: input.premise, status: "draft", currentStage: "created", createdAt: now, updatedAt: now };
-    const state: StoryState = { projectId: project.id, theme: "", endingDirection: "", bible: { summary: "", rules: [], locations: [], factions: [] }, characters: [], timeline: [], foreshadowing: [], corrections: [], revision: 1, updatedAt: now };
+    const state: StoryState = { projectId: project.id, theme: "", endingDirection: "", bible: { summary: "", rules: [], locations: [], factions: [] }, currentStagePlan: null, characters: [], timeline: [], foreshadowing: [], corrections: [], revision: 1, updatedAt: now };
     store.createProject(project, state);
-    const task = makeBootstrapTask(project.id); store.createTask(task);
-    if (input.autoStart) { void bootstrapProject(store, model, project, task).catch((error: Error) => { store.updateTask({ ...task, status: "failed", attempts: task.attempts + 1, error: error.message, updatedAt: new Date().toISOString() }); }); }
-    send(res, 201, { project, task }); return;
+    if (input.autoStart) startPhaseOne(project);
+    send(res, 201, { project: store.getProject(project.id), tasks: store.listTasks(project.id) }); return;
   }
   if (parts[0] === "api" && parts[1] === "projects" && parts[2]) {
     const project = store.getProject(parts[2]);
@@ -52,6 +57,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (method === "GET" && parts[3] === "state") { send(res, 200, { project, state: store.getStoryState(project.id) }); return; }
     if (method === "GET" && parts[3] === "chapters") { send(res, 200, { chapters: store.listChapters(project.id) }); return; }
     if (method === "GET" && parts[3] === "tasks") { send(res, 200, { tasks: store.listTasks(project.id) }); return; }
+    if (method === "POST" && parts[3] === "generate") {
+      if (project.status === "running") { send(res, 409, { error: "项目正在生成中" }); return; }
+      if (store.listChapters(project.id).length > 0) { send(res, 409, { error: "项目已经生成过第一章，Phase 2 才会支持继续生成" }); return; }
+      startPhaseOne(project);
+      send(res, 202, { project: store.getProject(project.id), message: "Phase 1 已开始执行" }); return;
+    }
     if (method === "POST" && parts[3] === "pause") { const next = { ...project, status: "paused" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); send(res, 200, { project: next }); return; }
     if (method === "POST" && parts[3] === "resume") { const next = { ...project, status: "running" as const, updatedAt: new Date().toISOString() }; store.updateProject(next); send(res, 200, { project: next }); return; }
   }

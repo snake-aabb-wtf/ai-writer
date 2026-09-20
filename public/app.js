@@ -16,14 +16,18 @@ async function loadProjects() {
 
 async function loadDetail() {
   if (!selectedId) { $('#detail').innerHTML = '<div class="muted">选择一个项目查看故事状态</div>'; return; }
-  const [state, tasks] = await Promise.all([request(`/api/projects/${selectedId}/state`), request(`/api/projects/${selectedId}/tasks`)]);
+  const [state, tasks, chapters] = await Promise.all([request(`/api/projects/${selectedId}/state`), request(`/api/projects/${selectedId}/tasks`), request(`/api/projects/${selectedId}/chapters`)]);
   const project = state.project;
-  $('#detail').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><div><h2>${escapeHtml(project.name)}</h2><div class="muted">${escapeHtml(project.premise)}</div></div><div class="row"><button class="secondary" id="pause">暂停</button><button id="resume">继续</button></div></div><h3>故事状态</h3><pre>${escapeHtml(JSON.stringify(state.state, null, 2))}</pre><h3>任务</h3><pre>${escapeHtml(JSON.stringify(tasks.tasks, null, 2))}</pre></div>`;
+  const generateButton = chapters.chapters.length === 0 ? '<button id="generate">生成第一章</button>' : '';
+  const chapterView = chapters.chapters.map((chapter) => `<article class="card"><h3>第${chapter.number}章：${escapeHtml(chapter.title)}</h3><div class="muted">${escapeHtml(chapter.summary)}</div><pre>${escapeHtml(chapter.body)}</pre></article>`).join('');
+  $('#detail').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><div><h2>${escapeHtml(project.name)}</h2><div class="muted">${escapeHtml(project.premise)}</div></div><div class="row">${generateButton}<button class="secondary" id="pause">暂停</button><button id="resume">继续</button></div></div><h3>故事状态</h3><pre>${escapeHtml(JSON.stringify(state.state, null, 2))}</pre><h3>任务</h3><pre>${escapeHtml(JSON.stringify(tasks.tasks, null, 2))}</pre></div>${chapterView}`;
+  if ($('#generate')) $('#generate').addEventListener('click', () => generatePhaseOne());
   $('#pause').addEventListener('click', () => changeRunState('pause'));
   $('#resume').addEventListener('click', () => changeRunState('resume'));
 }
 
 async function changeRunState(action) { await request(`/api/projects/${selectedId}/${action}`, { method: 'POST' }); await loadProjects(); await loadDetail(); }
+async function generatePhaseOne() { await request(`/api/projects/${selectedId}/generate`, { method: 'POST' }); await loadProjects(); await loadDetail(); }
 
 $('#create-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const form = new FormData(event.target); const payload = Object.fromEntries(form.entries()); payload.autoStart = form.get('autoStart') === 'on';

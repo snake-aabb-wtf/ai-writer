@@ -22,6 +22,8 @@ npm run dev:web   # Vite + React
 
 生产构建会把 React 页面输出到 `public/`，由同一个 Node API 服务静态资源。
 
+Windows 用户可以先复制并填写 `.env`，然后双击 `start.bat` 启动；脚本会自动使用 Node 24 的 `--env-file=.env` 加载模型配置，若尚未构建则先执行 `npm run build`。
+
 ## API 快速验证
 
 ```bash

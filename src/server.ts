@@ -2,7 +2,7 @@ import "node:process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { extname, resolve } from "node:path";
 import { loadConfig } from "./config.js";
 import type { CreateProjectInput, Project, StoryState, Task } from "./domain/types.js";
 import { OpenAICompatibleClient } from "./model/openai.js";
@@ -19,6 +19,30 @@ queue.recoverInterruptedTasks();
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" });
   res.end(JSON.stringify(body));
+}
+
+function staticContentType(filePath: string): string {
+  const extension = extname(filePath);
+  if (extension === ".html") return "text/html; charset=utf-8";
+  if (extension === ".js") return "text/javascript; charset=utf-8";
+  if (extension === ".css") return "text/css; charset=utf-8";
+  if (extension === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+async function serveStatic(pathname: string, res: ServerResponse): Promise<boolean> {
+  const publicRoot = resolve(process.cwd(), "public");
+  const relativePath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const filePath = resolve(publicRoot, relativePath);
+  if (filePath !== publicRoot && !filePath.startsWith(`${publicRoot}/`)) return false;
+  try {
+    const content = await readFile(filePath);
+    res.writeHead(200, { "content-type": staticContentType(filePath) });
+    res.end(content);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -40,8 +64,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const method = req.method ?? "GET";
   const parts = route(new URL(req.url ?? "/", "http://localhost").pathname);
   if (method === "OPTIONS") { res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PATCH,OPTIONS", "access-control-allow-headers": "content-type" }); res.end(); return; }
-  if (method === "GET" && parts.length === 0) { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(await readFile(join(process.cwd(), "public/index.html"))); return; }
-  if (method === "GET" && parts.length === 1 && parts[0] === "app.js") { res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }); res.end(await readFile(join(process.cwd(), "public/app.js"))); return; }
+  if (method === "GET" && (parts.length === 0 || parts[0] === "app.js" || parts[0] === "assets")) {
+    if (await serveStatic(new URL(req.url ?? "/", "http://localhost").pathname, res)) return;
+  }
   if (method === "GET" && parts[0] === "health") { send(res, 200, { ok: true, modelConfigured: model.configured }); return; }
   if (method === "GET" && parts[0] === "api" && parts[1] === "projects" && parts.length === 2) { send(res, 200, { projects: store.listProjects() }); return; }
   if (method === "POST" && parts[0] === "api" && parts[1] === "projects" && parts.length === 2) {

@@ -1,6 +1,6 @@
 # AI Writer
 
-单用户、多小说的自动化小说生产工作台。当前已完成 Phase 3：可以从项目灵感依次生成初始设定/人物、故事阶段和第一章，并通过 SQLite 任务队列、事实检索、一致性检查和动态阶段规划维护故事状态。
+单用户、多小说的自动化小说生产工作台。当前已完成 Phase 4：提供 Vite + React 创作观测台，并通过 SQLite 任务队列、事实检索、一致性检查和动态阶段规划维护故事状态。
 
 ## 运行
 
@@ -12,6 +12,15 @@ npm start
 ```
 
 默认监听 `http://localhost:4317`。Node.js 需要 24+，因为 MVP 使用内置 `node:sqlite`。
+
+开发时可分别运行 API 和前端：
+
+```bash
+npm run dev       # API
+npm run dev:web   # Vite + React
+```
+
+生产构建会把 React 页面输出到 `public/`，由同一个 Node API 服务静态资源。
 
 ## API 快速验证
 
@@ -39,3 +48,4 @@ Phase 1 会依次执行三个任务：`bootstrap`、`plan-stage`、`produce-chap
 - 结构化状态通过 revision 和 corrections 设计为追加式演进。
 - Phase 1 只生成第一章，项目完成后进入暂停状态；Phase 2/3 已提供任务重试/超时、暂停/继续、进程恢复、章节/场景复杂度选择、事实检索、一致性报告、伏笔超期检测和阶段完成后的下一阶段规划基础能力。
 - WebUI 已提供“生成第一章”按钮，并可查看章节正文、故事状态和三步任务记录。
+- Phase 4 WebUI 已迁移到 Vite + React，提供多小说列表、项目创建、运行控制、阶段目标、人物/伏笔/时间线、任务日志和章节阅读。

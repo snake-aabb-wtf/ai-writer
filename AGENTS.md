@@ -2,18 +2,21 @@
 
 ## 项目概览
 
-AI Writer 是一个单用户、多小说的自动化小说生产工作台。当前已完成 **Phase 3：故事事实检索与动态演化基础能力**；后续实现应以 [PLAN.md](/data1/project/AI%20Writer/PLAN.md) 为总体设计依据，并保持阶段边界清晰。
+AI Writer 是一个单用户、多小说的自动化小说生产工作台。当前已完成 **Phase 4：Vite + React WebUI 工作台**；后续实现应以 [PLAN.md](/data1/project/AI%20Writer/PLAN.md) 为总体设计依据，并保持阶段边界清晰。
 
 ## 技术栈与常用命令
 
 - Node.js 24+
 - TypeScript，ES modules
 - Node 内置 `node:sqlite` 持久化
-- 原生 HTML/CSS/JavaScript WebUI，暂不引入前端框架
+- Vite + React WebUI，源代码位于 `web/`
 - `npm run build`：编译 TypeScript
+- `npm run build:api`：只编译 API TypeScript
+- `npm run build:web`：只构建 Vite + React 到 `public/`
 - `npm test`：运行测试
 - `npm start`：启动生产构建后的 API/WebUI
 - `npm run dev`：开发模式启动
+- `npm run dev:web`：启动 Vite WebUI 开发服务器
 
 每次修改后至少运行 `npm run build` 和 `npm test`。
 
@@ -27,11 +30,12 @@ AI Writer 是一个单用户、多小说的自动化小说生产工作台。当�
 - `src/workflows/`：工作流初始化和任务编排。
 - `src/server.ts`：HTTP API 与静态 WebUI 服务。
 - `public/`：浏览器端界面。
+- `web/`：React 页面、组件和样式；不要把业务状态重新放回 `public/` 手写脚本。
 - `test/`：存储和工作流行为测试。
 
 Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修改数据库或正文文件。`src/workflows/queue.ts` 是当前队列编排入口，`src/workflows/agents.ts` 保存固定核心 Agent 的角色映射，`src/workflows/complexity.ts` 保存确定性复杂度评估器，`src/workflows/story-intelligence.ts` 保存事实检索和故事一致性规则。
 
-## 当前实现（Phase 1–3）
+## 当前实现（Phase 1–4）
 
 - `POST /api/projects` 创建小说项目，支持自定义类型、语言、文风以及一句话灵感/梗概/完整设定。
 - `POST /api/projects/:id/generate` 按顺序执行：初始设定与人物 → 故事阶段 → 第一章正文。
@@ -47,6 +51,8 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 - 伏笔记录首现章节和最近推进章节，高重要性伏笔长期未回收时生成 warning；warning 不会覆盖历史，也不会自动修改正文。
 - 阶段只有在模型显式返回 `stageComplete: true` 时才算完成；完成后把旧阶段追加到 `completedStages`，再根据事实检索结果规划下一阶段。
 - 当前仍没有完整的后台自动连载循环、动态 Agent、完整场景拆分或 WebUI 故事工作台；不要把 Phase 3 的规划/检查基础能力误写成这些功能已经完成。
+- Phase 4 的 React 工作台展示多小说列表、创建项目、运行状态、阶段目标、人物、伏笔、时间线、任务日志和章节正文；生成、暂停/继续和刷新操作通过现有 API 完成。
+- Vite 生产构建输出到 `public/`，API 必须继续提供 `index.html`、`app.js` 和 `assets/` 静态资源；不要让前端开发服务器成为生产运行依赖。
 
 主要项目接口还包括：
 
@@ -94,4 +100,4 @@ Agent 角色属于应用层逻辑，不应绕过工作流和存储层直接修�
 
 ## 下一阶段边界
 
-Phase 4 才实现完整 WebUI 工作台：多小说进度、任务状态、正文阅读、人物/时间线/伏笔视图和运行控制。当前 API/静态页面可以继续增量接入这些数据，但不要在没有验收测试的情况下把前端展示当作工作流事实源。
+Phase 5 才实现动态 Agent 工厂、总控授权、临时任务隔离、失败降级和完整恢复测试。WebUI 只是故事状态的观察和控制面，不是事实源；新增前端操作必须通过 API 和领域规则完成。

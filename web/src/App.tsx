@@ -6,6 +6,7 @@ type StoryState = { theme: string; endingDirection: string; bible: { summary: st
 type Chapter = { id: string; number: number; title: string; summary: string; body: string; productionMode?: string; stageComplete?: boolean; consistencyReport?: { ok: boolean; issues: Array<{ severity: string; message: string }> } };
 type Task = { id: string; kind: string; status: string; attempts: number; maxAttempts?: number; agentRole?: string };
 type Detail = { project: Project; state: StoryState; chapters: Chapter[]; tasks: Task[] };
+type ModelSettings = { baseUrl: string; model: string; apiKeyConfigured: boolean };
 
 const statusLabels: Record<string, string> = { draft: "草稿", running: "运行中", paused: "已暂停", completed: "已完成", error: "需处理", archived: "已归档" };
 const agentLabels: Record<string, string> = { orchestrator: "总控", "world-builder": "设定", planner: "规划", writer: "写作", continuity: "连贯性", memory: "记忆" };
@@ -30,6 +31,9 @@ export default function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"archive" | "purge">();
+  const [showModelSettings, setShowModelSettings] = useState(false);
+  const [modelSettings, setModelSettings] = useState<ModelSettings>();
+  const [settingsApplying, setSettingsApplying] = useState(false);
 
   const loadProjects = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -97,6 +101,21 @@ export default function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "操作失败"); }
   }
 
+  async function openModelSettings() {
+    try {
+      setModelSettings(await request<ModelSettings>("/api/settings/model"));
+      setShowModelSettings(true);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法读取模型配置"); }
+  }
+
+  async function saveModelSettings(payload: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean }) {
+    try {
+      await request<ModelSettings>("/api/settings/model", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      setSettingsApplying(true);
+      window.setTimeout(() => window.location.reload(), 6_200);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "保存模型配置失败"); }
+  }
+
   const activeProject = detail?.project ?? projects.find((project) => project.id === selectedId);
   const activeProjects = projects.filter((project) => project.status !== "archived");
   const archivedProjects = projects.filter((project) => project.status === "archived");
@@ -107,7 +126,7 @@ export default function App() {
       <div className="project-list">{activeProjects.map((project) => <ProjectListItem key={project.id} project={project} selectedId={selectedId} onSelect={setSelectedId} />)}{!activeProjects.length && <div className="empty-sidebar">还没有故事。<br />从一个念头开始。</div>}</div>
       {archivedProjects.length > 0 && <><div className="eyebrow archived-heading">已归档 <span>{archivedProjects.length.toString().padStart(2, "0")}</span></div><div className="project-list archived-project-list">{archivedProjects.map((project) => <ProjectListItem key={project.id} project={project} selectedId={selectedId} onSelect={setSelectedId} />)}</div></>}
       <button className="new-project-button" onClick={() => setShowCreate(true)}><span>＋</span> 新建小说</button>
-      <div className="sidebar-footer"><span className={`signal ${modelConfigured ? "signal-on" : ""}`} />{modelConfigured ? "模型已连接" : "本地降级模式"}<span className="footer-version">v0.4</span></div>
+      <button className="sidebar-footer model-settings-trigger" onClick={() => void openModelSettings()}><span className={`signal ${modelConfigured ? "signal-on" : ""}`} />{modelConfigured ? "模型已连接" : "本地降级模式"}<span className="footer-version">配置 ↗</span></button>
     </aside>
     <main className="main-canvas">
       <header className="topbar"><div className="breadcrumb"><span>工作台</span><i>/</i><strong>{activeProject?.name ?? "故事库"}</strong></div><div className="topbar-actions"><span className="live-indicator"><span /> {detail?.project.status === "running" ? "实时同步中" : "状态已保存"}</span>{activeProject && <div className="project-menu-wrap"><button className="quiet-button menu-trigger" aria-expanded={showProjectMenu} onClick={() => setShowProjectMenu((open) => !open)}>项目菜单 <span>⋯</span></button>{showProjectMenu && <div className="project-menu" role="menu">{activeProject.status === "archived" ? <button role="menuitem" onClick={() => void restoreProject()}>恢复项目</button> : <button role="menuitem" onClick={() => { setConfirmAction("archive"); setShowProjectMenu(false); }}>归档项目</button>}<button className="danger-menu-item" role="menuitem" onClick={() => { setConfirmAction("purge"); setShowProjectMenu(false); }}>永久删除…</button></div>}</div>}<button className="icon-button" title="刷新" onClick={() => { void loadProjects(); void loadDetail(); }}>↻</button></div></header>
@@ -116,6 +135,7 @@ export default function App() {
     </main>
     {showCreate && <CreateDialog onClose={() => setShowCreate(false)} onCreate={createProject} />}
     {confirmAction && activeProject && <ProjectConfirmDialog action={confirmAction} project={activeProject} onClose={() => setConfirmAction(undefined)} onConfirm={(name) => void confirmProjectAction(name)} />}
+    {showModelSettings && modelSettings && <ModelSettingsDialog settings={modelSettings} applying={settingsApplying} onClose={() => { if (!settingsApplying) setShowModelSettings(false); }} onSave={(payload) => void saveModelSettings(payload)} />}
   </div>;
 }
 
@@ -149,4 +169,22 @@ function ProjectConfirmDialog({ action, project, onClose, onConfirm }: { action:
   const [name, setName] = useState("");
   const purge = action === "purge";
   return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className={`create-dialog project-confirm-dialog ${purge ? "is-danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby="project-confirm-title" onSubmit={(event) => { event.preventDefault(); onConfirm(purge ? name : undefined); }}><button className="dialog-close" type="button" onClick={onClose}>×</button><div className="eyebrow">{purge ? "不可逆操作" : "故事库整理"}</div><h2 id="project-confirm-title">{purge ? "永久删除项目" : "归档项目"}</h2><p className="dialog-intro">{purge ? <>这会删除 <strong>{project.name}</strong> 的正文、人物、伏笔、任务和运行记录，无法恢复。</> : <>项目会从主故事库移到“已归档”，正文和全部状态都会保留，之后可以恢复。</>}</p>{purge && <label>输入项目名称确认<input required value={name} onChange={(event) => setName(event.target.value)} placeholder={project.name} /></label>}<div className="confirm-actions"><button className="quiet-button" type="button" onClick={onClose}>取消</button><button className={purge ? "danger-button" : "primary-button"} type="submit">{purge ? "永久删除" : "归档项目"}</button></div></form></div>;
+}
+
+function ModelSettingsDialog({ settings, applying, onClose, onSave }: { settings: ModelSettings; applying: boolean; onClose: () => void; onSave: (payload: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean }) => void }) {
+  const [form, setForm] = useState({ baseUrl: settings.baseUrl, model: settings.model, apiKey: "", clearApiKey: false });
+  const update = (key: keyof typeof form, value: string | boolean) => setForm((current) => ({ ...current, [key]: value }));
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (!applying && event.target === event.currentTarget) onClose(); }}><form className="create-dialog model-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="model-settings-title" onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
+    {!applying && <button className="dialog-close" type="button" onClick={onClose}>×</button>}
+    <div className="eyebrow">全局运行时</div><h2 id="model-settings-title">模型连接</h2>
+    {applying ? <div className="settings-applying"><div className="loading-orbit" /><strong>正在应用新的模型配置</strong><p>服务会在数秒后重新上线，页面将自动刷新。</p></div> : <>
+      <p className="dialog-intro">所有小说共用这一组模型配置。保存后会写入 <code>.env</code>，并重新加载服务。</p>
+      <label>接口地址<input required value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} placeholder="https://api.openai.com/v1" /></label>
+      <label>模型 ID<input required value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="gpt-5.6-luna" /></label>
+      <label>API Key <span className="field-note">{settings.apiKeyConfigured ? "已保存；留空即保留" : "尚未保存"}</span><input type="password" autoComplete="new-password" value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={settings.apiKeyConfigured ? "不显示已保存的密钥" : "粘贴新的 API Key"} /></label>
+      <label className="checkbox-label"><input type="checkbox" checked={form.clearApiKey} onChange={(event) => update("clearApiKey", event.target.checked)} disabled={Boolean(form.apiKey)} /> 清除已保存的 API Key</label>
+      <div className="restart-note"><span>↻</span><p>保存会重启 AI Writer。请先暂停运行中的小说；服务重启期间短暂不可用。</p></div>
+      <button className="primary-button full-button" type="submit">保存并重新加载 <span>↗</span></button>
+    </>}
+  </form></div>;
 }

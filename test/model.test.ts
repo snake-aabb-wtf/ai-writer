@@ -9,6 +9,8 @@ const config: Config = {
   openaiBaseUrl: "https://model.test/v1",
   openaiApiKey: "test-key",
   openaiModel: "test-model",
+  basicAuthUsername: "",
+  basicAuthPassword: "",
 };
 
 describe("OpenAI 兼容模型客户端", () => {

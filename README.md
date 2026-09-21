@@ -100,6 +100,17 @@ npm run dev:web   # Vite + React
 
 Windows 用户可以先复制并填写 `.env`，然后双击 `start.bat` 启动；Linux/macOS 用户运行 `./start.sh`。两个脚本都会使用 Node 24 的 `--env-file=.env` 加载模型配置，若尚未构建则先执行 `npm run build`。
 
+### 可选：WebUI Basic Auth
+
+如需为整个 WebUI 和 API 加一层浏览器登录验证，在 `.env` 同时填写下面两项，然后重启服务：
+
+```env
+BASIC_AUTH_USERNAME=your-username
+BASIC_AUTH_PASSWORD=use-a-long-random-password
+```
+
+**两项都非空才会启用**；只填其中一项时服务保持未认证模式，避免误锁站点。启用后 `/health` 也需要认证。
+
 ### Linux + Nginx 部署
 
 仓库的 `deploy/` 提供了持久化服务和 Nginx 反代模板。当前部署使用三级域名 **`aiwriter.Luminthalia.top`**，Node 服务只监听本机 `4317` 端口：

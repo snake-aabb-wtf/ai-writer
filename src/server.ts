@@ -3,7 +3,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import { loadConfig } from "./config.js";
+import { loadConfig, saveModelSettings } from "./config.js";
+import { basicAuthMatches } from "./basic-auth.js";
 import type { CreateProjectInput, Project, StoryState, Task } from "./domain/types.js";
 import { OpenAICompatibleClient } from "./model/openai.js";
 import { Store } from "./storage/store.js";
@@ -19,6 +20,14 @@ queue.recoverInterruptedTasks();
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" });
   res.end(JSON.stringify(body));
+}
+
+function sendUnauthorized(res: ServerResponse): void {
+  res.writeHead(401, {
+    "content-type": "application/json; charset=utf-8",
+    "www-authenticate": 'Basic realm="AI Writer", charset="UTF-8"',
+  });
+  res.end(JSON.stringify({ error: "需要身份验证" }));
 }
 
 function staticContentType(filePath: string): string {
@@ -60,7 +69,19 @@ function startPhaseOne(project: Project): void {
   });
 }
 
+function restartAfterResponse(): void {
+  // The production unit uses Restart=on-failure. Exit only after the JSON
+  // response has left the socket, so the next process reads the new .env.
+  const timer = setTimeout(() => {
+    server.close(() => { store.close(); process.exit(1); });
+    const forceExit = setTimeout(() => process.exit(1), 2_000);
+    forceExit.unref();
+  }, 150);
+  timer.unref();
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!basicAuthMatches(req.headers.authorization, config)) { sendUnauthorized(res); return; }
   const method = req.method ?? "GET";
   const parts = route(new URL(req.url ?? "/", "http://localhost").pathname);
   if (method === "OPTIONS") { res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PATCH,OPTIONS", "access-control-allow-headers": "content-type" }); res.end(); return; }
@@ -68,6 +89,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (await serveStatic(new URL(req.url ?? "/", "http://localhost").pathname, res)) return;
   }
   if (method === "GET" && parts[0] === "health") { send(res, 200, { ok: true, modelConfigured: model.configured }); return; }
+  if (method === "GET" && parts[0] === "api" && parts[1] === "settings" && parts[2] === "model" && parts.length === 3) {
+    send(res, 200, { baseUrl: config.openaiBaseUrl, model: config.openaiModel, apiKeyConfigured: Boolean(config.openaiApiKey) }); return;
+  }
+  if (method === "PATCH" && parts[0] === "api" && parts[1] === "settings" && parts[2] === "model" && parts.length === 3) {
+    if (store.listProjects(true).some((project) => project.status === "running")) { send(res, 409, { error: "有小说正在运行，请先暂停后再保存模型配置" }); return; }
+    const input = await readJson(req) as { baseUrl?: string; model?: string; apiKey?: string; clearApiKey?: boolean };
+    const settings = await saveModelSettings(input);
+    send(res, 202, { ...settings, message: "配置已保存，服务正在重新加载" });
+    restartAfterResponse();
+    return;
+  }
   if (method === "GET" && parts[0] === "api" && parts[1] === "projects" && parts.length === 2) {
     const includeArchived = new URL(req.url ?? "/", "http://localhost").searchParams.get("includeArchived") === "true";
     send(res, 200, { projects: store.listProjects(includeArchived) }); return;
